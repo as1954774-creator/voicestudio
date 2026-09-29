@@ -48,6 +48,7 @@ let lastRoutingStatus: string | null = null;
 export interface DesignGenerateInput {
   text: string;
   instruct: string;
+  structuredInstruct?: string;
   seed: number;
   language?: string;
   profileId?: string | null;
@@ -95,6 +96,13 @@ function announceInstructWarnings(free: string): string {
     toast.warning(tr('tts_errors.ignored_conflict', { items: conflicts.join(', ') }));
   }
   return instruct;
+}
+
+function supportsFreeformDesign(engines: EnginesResponse | undefined): boolean {
+  const tts = engines?.tts;
+  if (!tts) return false;
+  if (tts.active === 'voxcpm2') return true;
+  return tts.active === 'mlx-audio' && /qwen3|voicedesign/i.test(tts.active_model ?? '');
 }
 
 function announceResultNotices(result: GenerateResult): void {
@@ -266,8 +274,18 @@ function useGenerateController(): UseGenerateClone {
       const controller = new AbortController();
       abortRef.current = controller;
       try {
-        const free = design?.instruct ?? settings.instruct;
-        const instruct = free.trim() ? announceInstructWarnings(free) : '';
+        const engines = queryClient.getQueryData<EnginesResponse>(queryKeys.engines);
+        const freeformInstruct = Boolean(design && supportsFreeformDesign(engines));
+        const free = design
+          ? freeformInstruct
+            ? design.instruct
+            : (design.structuredInstruct ?? design.instruct)
+          : settings.instruct;
+        const instruct = free.trim()
+          ? freeformInstruct
+            ? design?.instruct.trim()
+            : announceInstructWarnings(free)
+          : '';
         const input = {
           text: design?.text ?? settings.text,
           seed: design?.seed,
@@ -276,6 +294,7 @@ function useGenerateController(): UseGenerateClone {
           refAudio: design || settings.selectedProfileId ? null : reference.file,
           refText: design ? undefined : settings.refText,
           instruct,
+          freeformInstruct,
           steps: effectiveSamplingSteps(
             settings.steps,
             queryClient.getQueryData<EnginesResponse>(queryKeys.engines)?.tts?.active,
